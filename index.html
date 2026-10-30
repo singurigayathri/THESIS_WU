@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A1 vs Competitors</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.35.2/plotly.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f7f8fa;--card:#fff;--ink:#16202e;--mute:#5d6b7e;--line:#dde2ea;--accent:#1f3864;--accent-ink:#fff;--warn:#fff6dc;--warn-ink:#6b4e00}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f141b;--card:#171e28;--ink:#e6ebf2;--mute:#92a0b3;--line:#2a3442;--accent:#7aa2f7;--accent-ink:#0f141b;--warn:#3a3014;--warn-ink:#f1d98a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0 2px}
+.sub{color:var(--mute);margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+label{display:block;font-size:12px;color:var(--mute);margin-bottom:3px}
+select,input[type=number],input[type=file]{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit;max-width:100%}
+button{background:var(--accent);color:var(--accent-ink);border:0;border-radius:6px;padding:7px 12px;font:inherit;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.tab{padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.tab.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.pane{display:none}.pane.on{display:block}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mute);font-weight:600}
+.scroll{overflow-x:auto}
+.note{background:var(--warn);color:var(--warn-ink);padding:8px 10px;border-radius:8px;font-size:13px;margin:8px 0}
+.mute{color:var(--mute);font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer;user-select:none}
+.chip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.plot{width:100%;height:440px}
+@media (max-width:600px){.wrap{padding:10px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>A1 vs competitors</h1>
+  <p class="sub">OpCo view, global peers and stock volatility. Prices and GARCH refresh automatically every weekday evening; OpCo figures come from the Excel in the repository.</p>
+
+  <div class="card">
+    <div id="status" class="mute">Loading data...</div>
+    <div id="issues"></div>
+    <details style="margin-top:8px"><summary class="mute" style="cursor:pointer">Use your own files instead (optional)</summary>
+      <div class="row" style="margin-top:8px">
+        <div><label>Prices CSV (Date + one column per company)</label><input type="file" id="fPrices" accept=".csv"></div>
+        <div><label>OpCo KPIs (.xlsx or .csv)</label><input type="file" id="fOpco" accept=".xlsx,.xls,.csv"></div>
+        <div><button class="ghost" id="btnDemo">Load demo data</button></div>
+      </div>
+    </details>
+  </div>
+
+  <div class="tabs">
+    <div class="tab on" data-p="p1">1. OpCo vs country competitors</div>
+    <div class="tab" data-p="p2">2. Global peers</div>
+    <div class="tab" data-p="p3">3. Thesis: volatility</div>
+  </div>
+
+  <div id="p1" class="pane on">
+    <div class="card">
+      <div class="row">
+        <div><label>Country</label><select id="selCountry"></select></div>
+        <div><label>KPI</label><select id="selKpi"></select></div>
+        <div><label>Table year</label><select id="selYear"></select></div>
+        <div><button class="ghost" id="dlOpco">Download table (CSV)</button></div>
+      </div>
+      <div id="opcoMsg"></div>
+      <div id="opcoPlot" class="plot"></div>
+      <div class="scroll"><table id="opcoTable"></table></div>
+    </div>
+  </div>
+
+  <div id="p2" class="pane">
+    <div class="card">
+      <label>Companies (click to toggle)</label>
+      <div id="peerChips" class="chips"></div>
+      <div id="peerPlot" class="plot"></div>
+      <p class="mute">Rebased to 100 at each stock's first date, so different currencies are comparable. Price series only; not a total-return measure unless your data source adjusted for dividends.</p>
+    </div>
+  </div>
+
+  <div id="p3" class="pane">
+    <div class="card">
+      <div class="row">
+        <div><label>Rolling window (trading days)</label><input type="number" id="win" value="90" min="20" max="250" step="10" style="width:90px"></div>
+        <div><label>From</label><select id="yFrom"></select></div>
+        <div><label>To</label><select id="yTo"></select></div>
+        <div><label>Benchmark column for beta</label><select id="selBench"></select></div>
+      </div>
+      <label style="margin-top:10px">Companies for the volatility chart</label>
+      <div id="volChips" class="chips"></div>
+    </div>
+    <div class="card"><h3 style="margin-top:0">Summary statistics</h3>
+      <div class="scroll"><table id="sumTable"></table></div>
+      <button class="ghost" id="dlSum" style="margin-top:8px">Download (CSV)</button></div>
+    <div class="card"><h3 style="margin-top:0">Rolling volatility (annualised %)</h3><div id="volPlot" class="plot"></div></div>
+    <div class="card"><h3 style="margin-top:0">Do fundamentals explain volatility? (OLS regression)</h3>
+      <div class="row"><div><label>Fundamental (x)</label><select id="selX"></select></div></div>
+      <div id="regOut"></div><div id="regPlot" class="plot"></div>
+    </div>
+    <div class="card"><h3 style="margin-top:0">GARCH(1,1)</h3>
+      <p class="mute">Computed on the server from the full price history (t-distributed errors). Persistence (alpha + beta) close to 1 means volatility shocks fade slowly.</p>
+      <div class="scroll"><table id="garchTable"></table></div>
+      <div id="garchPlot" class="plot"></div></div>
+  </div>
+</div>
+
+<script>
+const KPIS=["Revenue (EUR m)","EBITDA (EUR m)","EBITDA margin (%)","Capex (EUR m)","Mobile subscribers (k)","Fixed subscribers (k)","ARPU (EUR/month)","Market share (%)"];
+const SRC="Source (URL / report + page)";
+const TD=252;
+let G=null;      // garch.json
+let P=null;      // {dates:[], cols:{name:[numbers|null]}}
+let O=null;      // array of row objects
+let peerSel=new Set(), volSel=new Set();
+
+/* ---------- helpers ---------- */
+const $=id=>document.getElementById(id);
+const num=v=>{if(v===null||v===undefined||v==="")return null;const n=Number(String(v).replace(",","."));return Number.isFinite(n)?n:null;};
+const mean=a=>a.reduce((s,x)=>s+x,0)/a.length;
+const sd=a=>{if(a.length<2)return NaN;const m=mean(a);return Math.sqrt(a.reduce((s,x)=>s+(x-m)**2,0)/(a.length-1));};
+const fmt=(x,d=2)=>(x===null||x===undefined||!Number.isFinite(x))?"–":x.toFixed(d);
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function layout(extra){return Object.assign({paper_bgcolor:"rgba(0,0,0,0)",plot_bgcolor:"rgba(0,0,0,0)",font:{color:css("--ink"),size:12},margin:{l:50,r:16,t:60,b:40},legend:{orientation:"h",y:1.02,yanchor:"bottom"},xaxis:{gridcolor:css("--line")},yaxis:{gridcolor:css("--line")}},extra||{});}
+function setStatus(t){$("status").textContent=t;}
+function download(name,text){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type:"text/csv"}));a.download=name;a.click();}
+function toCSV(rows){return rows.map(r=>r.map(c=>{const s=String(c??"");return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}).join(",")).join("\n");}
+
+/* ---------- parsing ---------- */
+function splitLine(l){const out=[];let cur="",q=false;for(const ch of l){if(ch==='"'){q=!q;}else if(ch===","&&!q){out.push(cur);cur="";}else cur+=ch;}out.push(cur);return out;}
+function parsePrices(text){
+  const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
+  if(lines.length<3)throw new Error("Prices file looks empty.");
+  const head=splitLine(lines[0]).map(s=>s.trim());
+  const names=head.slice(1), cols={}; names.forEach(n=>cols[n]=[]);
+  const dates=[];
+  for(let i=1;i<lines.length;i++){
+    const f=splitLine(lines[i]); dates.push(f[0].slice(0,10));
+    names.forEach((n,j)=>cols[n].push(num(f[j+1])));
+  }
+  return {dates,cols};
+}
+function normaliseOpco(rows){
+  rows.forEach(r=>{KPIS.concat(["Year"]).forEach(k=>{if(k in r)r[k]=num(r[k]);});
+    if(r["EBITDA margin (%)"]==null&&r["EBITDA (EUR m)"]!=null&&r["Revenue (EUR m)"])r["EBITDA margin (%)"]=r["EBITDA (EUR m)"]/r["Revenue (EUR m)"]*100;});
+  return rows.filter(r=>r.Company&&r.Year);
+}
+
+/* ---------- analysis ---------- */
+function logRet(arr){const out=[null];for(let i=1;i<arr.length;i++){const a=arr[i-1],b=arr[i];out.push(a>0&&b>0?Math.log(b/a):null);}return out;}
+function sliceIdx(){const f=$("yFrom").value,t=$("yTo").value;let a=0,b=P.dates.length-1;
+  a=P.dates.findIndex(d=>+d.slice(0,4)>=+f); if(a<0)a=0;
+  for(let i=P.dates.length-1;i>=0;i--){if(+P.dates[i].slice(0,4)<=+t){b=i;break;}} return [a,b];}
+function rollingVol(r,w){const out=[];for(let i=0;i<r.length;i++){if(i<w){out.push(null);continue;}const win=r.slice(i-w+1,i+1).filter(x=>x!==null);out.push(win.length>=w*0.8?sd(win)*Math.sqrt(TD)*100:null);}return out;}
+function maxDD(p){let peak=-Infinity,m=0;for(const x of p){if(x===null)continue;peak=Math.max(peak,x);m=Math.min(m,x/peak-1);}return m*100;}
+function betaOf(r,b){const x=[],y=[];for(let i=0;i<r.length;i++){if(r[i]!==null&&b[i]!==null){x.push(b[i]);y.push(r[i]);}}
+  if(x.length<60)return null;const mx=mean(x),my=mean(y);let c=0,v=0;for(let i=0;i<x.length;i++){c+=(x[i]-mx)*(y[i]-my);v+=(x[i]-mx)**2;}return c/v;}
+function ols(x,y){const n=x.length,mx=mean(x),my=mean(y);let sxy=0,sxx=0,syy=0;for(let i=0;i<n;i++){sxy+=(x[i]-mx)*(y[i]-my);sxx+=(x[i]-mx)**2;syy+=(y[i]-my)**2;}
+  const slope=sxy/sxx,ic=my-slope*mx,r2=sxy*sxy/(sxx*syy);let sse=0;for(let i=0;i<n;i++)sse+=(y[i]-ic-slope*x[i])**2;
+  const se=Math.sqrt(sse/(n-2)/sxx);return {n,slope,ic,r2,t:slope/se};}
+
+/* ---------- View 1 ---------- */
+function initOpco(){
+  const cs=[...new Set(O.map(r=>r.Country))], ys=[...new Set(O.map(r=>r.Year))].sort((a,b)=>b-a);
+  $("selCountry").innerHTML=cs.map(c=>`<option>${c}</option>`).join("");
+  $("selKpi").innerHTML=KPIS.map((k,i)=>`<option ${i==2?"selected":""}>${k}</option>`).join("");
+  $("selYear").innerHTML=ys.map(y=>`<option>${y}</option>`).join("");
+  renderOpco();
+}
+function renderOpco(){
+  if(!O){$("opcoMsg").innerHTML='<div class="note">Load your OpCo Excel (step 2) or the demo.</div>';return;}
+  const c=$("selCountry").value,k=$("selKpi").value,y=+$("selYear").value;
+  const d=O.filter(r=>r.Country===c), companies=[...new Set(d.map(r=>r.Company))];
+  const has=d.some(r=>r[k]!=null);
+  $("opcoMsg").innerHTML=has?"":`<div class="note">No data entered yet for "${k}" in ${c}. Fill the Excel (write n/a in Notes where a figure is not public).</div>`;
+  const traces=companies.map(co=>{const rr=d.filter(r=>r.Company===co).sort((a,b)=>a.Year-b.Year);return {x:rr.map(r=>r.Year),y:rr.map(r=>r[k]),name:co,mode:"lines+markers",type:"scatter"};});
+  Plotly.react("opcoPlot",traces,layout({title:{text:`${k} – ${c}`,font:{size:14}},xaxis:{dtick:1,gridcolor:css("--line")}}),{responsive:true,displaylogo:false});
+  const rows=d.filter(r=>r.Year===y);
+  $("opcoTable").innerHTML="<tr><th>Company</th><th>Role</th>"+KPIS.map(x=>`<th>${x}</th>`).join("")+"</tr>"+
+    rows.map(r=>`<tr><td>${r.Company}</td><td>${r.Role||""}</td>`+KPIS.map(x=>`<td>${fmt(r[x],1)}</td>`).join("")+"</tr>").join("");
+  const miss=rows.reduce((s,r)=>s+KPIS.filter(x=>r[x]==null).length,0);
+  if(miss)$("opcoMsg").innerHTML+=`<div class="mute">${miss} KPI cells empty for ${y}.</div>`;
+}
+$("dlOpco").onclick=()=>{if(!O)return;const c=$("selCountry").value,y=+$("selYear").value;const rows=O.filter(r=>r.Country===c&&r.Year===y);
+  download(`opco_${c}_${y}.csv`,toCSV([["Company","Role",...KPIS,SRC]].concat(rows.map(r=>[r.Company,r.Role,...KPIS.map(k=>r[k]),r[SRC]]))));};
+["selCountry","selKpi","selYear"].forEach(id=>$(id).onchange=renderOpco);
+
+/* ---------- chips ---------- */
+function makeChips(el,set,names,cb){el.innerHTML="";names.forEach(n=>{const s=document.createElement("span");s.className="chip"+(set.has(n)?" on":"");s.textContent=n;
+  s.onclick=()=>{set.has(n)?set.delete(n):set.add(n);s.classList.toggle("on");cb();};el.appendChild(s);});}
+
+/* ---------- View 2 ---------- */
+function renderPeers(){
+  if(!P)return;
+  const traces=[...peerSel].map(n=>{const a=P.cols[n];const first=a.find(x=>x!==null);return {x:P.dates,y:a.map(x=>x===null?null:x/first*100),name:n,mode:"lines",type:"scatter"};});
+  Plotly.react("peerPlot",traces,layout({title:{text:"Share price, rebased to 100",font:{size:14}}}),{responsive:true,displaylogo:false});
+}
+
+/* ---------- View 3 ---------- */
+function initYears(){
+  const ys=[...new Set(P.dates.map(d=>+d.slice(0,4)))];
+  $("yFrom").innerHTML=ys.map(y=>`<option>${y}</option>`).join("");
+  $("yTo").innerHTML=ys.map(y=>`<option>${y}</option>`).join("");
+  $("yTo").value=ys[ys.length-1];
+  const names=Object.keys(P.cols);
+  const bi=names.findIndex(n=>/stoxx|index|benchmark/i.test(n));
+  $("selBench").innerHTML=names.map((n,i)=>`<option ${i===bi?"selected":""}>${n}</option>`).join("");
+}
+function renderThesis(){
+  if(!P)return;
+  const [a,b]=sliceIdx(), names=Object.keys(P.cols), bench=$("selBench").value, w=+$("win").value||90;
+  const R={},PR={};
+  names.forEach(n=>{PR[n]=P.cols[n].slice(a,b+1);R[n]=logRet(PR[n]);});
+  // summary
+  const rows=[];
+  names.forEach(n=>{const r=R[n].filter(x=>x!==null);if(r.length<30)return;
+    rows.push([n,mean(r)*TD*100,sd(r)*Math.sqrt(TD)*100,maxDD(PR[n]),mean(r)/sd(r)*Math.sqrt(TD),n===bench?null:betaOf(R[n],R[bench]),r.length]);});
+  const head=["Company","Ann. return %","Ann. volatility %","Max drawdown %","Sharpe (rf=0)","Beta vs benchmark","Observations"];
+  $("sumTable").innerHTML="<tr>"+head.map(h=>`<th>${h}</th>`).join("")+"</tr>"+rows.map(r=>`<tr><td>${r[0]}</td>`+r.slice(1,6).map(x=>`<td>${fmt(x)}</td>`).join("")+`<td>${r[6]}</td></tr>`).join("");
+  $("dlSum").onclick=()=>download("stock_summary.csv",toCSV([head].concat(rows.map(r=>r.map((x,i)=>i&&i<6?(x==null?"":x.toFixed(2)):x)))));
+  // rolling vol
+  const traces=[...volSel].filter(n=>R[n]).map(n=>({x:P.dates.slice(a,b+1),y:rollingVol(R[n],w),name:n,mode:"lines",type:"scatter"}));
+  Plotly.react("volPlot",traces,layout({yaxis:{title:"% p.a.",gridcolor:css("--line")}}),{responsive:true,displaylogo:false});
+  renderReg(R,a,b);
+  renderGarch();
+}
+function renderReg(R,a,b){
+  const el=$("regOut");
+  if(!O){el.innerHTML='<div class="note">Load the OpCo Excel to run the regression.</div>';$("regPlot").style.display="none";return;}
+  const x=$("selX").value, dates=P.dates.slice(a,b+1), pts=[];
+  Object.keys(R).forEach(n=>{const byY={};R[n].forEach((v,i)=>{if(v!==null){(byY[dates[i].slice(0,4)]=byY[dates[i].slice(0,4)]||[]).push(v);}});
+    Object.entries(byY).forEach(([y,arr])=>{if(arr.length<100)return;
+      const f=O.find(r=>r.Country==="Group (listed peers)"&&r.Company===n&&r.Year===+y&&r[x]!=null);if(f)pts.push({n,y:sd(arr)*Math.sqrt(TD)*100,x:f[x]});});});
+  if(pts.length<10){el.innerHTML=`<div class="note">Only ${pts.length} matching company-year points (need at least 10). Fill the rows named "Group (listed peers)" in the Excel for this KPI (company names must match the price series exactly, e.g. "Hrvatski Telekom"), then upload the Excel to GitHub (docs/data/opco_data.xlsx).</div>`;$("regPlot").style.display="none";Plotly.purge("regPlot");return;}
+  $("regPlot").style.display="block";
+  const m=ols(pts.map(p=>p.x),pts.map(p=>p.y));
+  el.innerHTML=`<p>n = <b>${m.n}</b> &nbsp; slope = <b>${fmt(m.slope,3)}</b> &nbsp; intercept = <b>${fmt(m.ic,2)}</b> &nbsp; R² = <b>${fmt(m.r2,3)}</b> &nbsp; t-stat = <b>${fmt(m.t,2)}</b></p><p class="mute">Small sample, pooled across companies and years: report as exploratory and list it under limitations.</p>`;
+  const xs=pts.map(p=>p.x),x0=Math.min(...xs),x1=Math.max(...xs);
+  const names=[...new Set(pts.map(p=>p.n))];
+  const tr=names.map(n=>({x:pts.filter(p=>p.n===n).map(p=>p.x),y:pts.filter(p=>p.n===n).map(p=>p.y),name:n,mode:"markers",type:"scatter"}));
+  tr.push({x:[x0,x1],y:[m.ic+m.slope*x0,m.ic+m.slope*x1],mode:"lines",name:"OLS fit",line:{dash:"dash",color:css("--mute")}});
+  Plotly.react("regPlot",tr,layout({xaxis:{title:x,gridcolor:css("--line")},yaxis:{title:"Annual volatility %",gridcolor:css("--line")}}),{responsive:true,displaylogo:false});
+}
+["win","yFrom","yTo","selBench","selX"].forEach(id=>$(id).onchange=renderThesis);
+
+/* ---------- loading ---------- */
+function afterPrices(){
+  const names=Object.keys(P.cols);
+  const bench=names.find(n=>/stoxx|index|benchmark/i.test(n));
+  const stocks=names.filter(n=>n!==bench);
+  peerSel=new Set(stocks.slice(0,6)); volSel=new Set(stocks.slice(0,5));
+  makeChips($("peerChips"),peerSel,stocks,renderPeers);
+  makeChips($("volChips"),volSel,stocks,renderThesis);
+  initYears(); renderPeers(); renderThesis();
+}
+function afterOpco(){
+  $("selX").innerHTML=KPIS.filter(k=>k!=="Market share (%)").map((k,i)=>`<option ${i==2?"selected":""}>${k}</option>`).join("");
+  initOpco(); if(P)renderThesis();
+}
+$("fPrices").onchange=async e=>{const f=e.target.files[0];if(!f)return;
+  try{P=parsePrices(await f.text());G=null;afterPrices();setStatus(`Prices loaded: ${Object.keys(P.cols).length} series, ${P.dates.length} days (${P.dates[0]} to ${P.dates[P.dates.length-1]}).`);}
+  catch(err){setStatus("Prices error: "+err.message);}};
+$("fOpco").onchange=async e=>{const f=e.target.files[0];if(!f)return;
+  try{let rows;
+    if(/\.csv$/i.test(f.name)){rows=XLSX.utils.sheet_to_json(XLSX.read(await f.text(),{type:"string"}).Sheets.Sheet1);}
+    else{const wb=XLSX.read(await f.arrayBuffer(),{type:"array"});rows=XLSX.utils.sheet_to_json(wb.Sheets["OpCo_KPIs"]||wb.Sheets[wb.SheetNames[0]]);}
+    O=normaliseOpco(rows);if(!O.length)throw new Error("No usable rows (need Company and Year columns).");
+    afterOpco();setStatus((P?$("status").textContent+" ":"")+`OpCo data loaded: ${O.length} rows.`);}
+  catch(err){setStatus("OpCo error: "+err.message);}};
+
+
+/* ---------- site loader: reads the JSON files the daily job writes ---------- */
+const INFO={prices:"",opco:""};
+function refreshStatus(){setStatus([INFO.prices,INFO.opco].filter(Boolean).join("  |  "));}
+async function getJSON(u){try{const r=await fetch(u+"?v="+Date.now());if(!r.ok)return null;return await r.json();}catch(e){return null;}}
+function renderGarch(){
+  const t=$("garchTable"),pl=$("garchPlot");
+  if(!G||!G.params||!Object.keys(G.params).length){t.innerHTML='<tr><td>GARCH results appear here once the daily data job has run (not available for uploaded/demo data).</td></tr>';pl.style.display="none";return;}
+  const names=Object.keys(G.params);
+  t.innerHTML="<tr><th>Company</th><th>omega</th><th>alpha[1]</th><th>beta[1]</th><th>persistence</th><th>Observations</th></tr>"+
+    names.map(n=>{const p=G.params[n];return `<tr><td>${n}</td><td>${fmt(p.omega,4)}</td><td>${fmt(p.alpha,4)}</td><td>${fmt(p.beta,4)}</td><td>${fmt(p.persistence,4)}</td><td>${p.n}</td></tr>`;}).join("");
+  pl.style.display="block";
+  const tr=[...volSel].filter(n=>G.cond&&G.cond[n]).map(n=>({x:G.dates,y:G.cond[n],name:n,mode:"lines",type:"scatter"}));
+  Plotly.react("garchPlot",tr,layout({yaxis:{title:"% p.a. (GARCH conditional volatility)",gridcolor:css("--line")}}),{responsive:true,displaylogo:false});
+}
+async function loadSite(){
+  if(location.protocol==="file:"){INFO.prices="This page was opened as a local file, so it cannot read the data files. Open the website link instead, or use 'Use your own files' / the demo below.";refreshStatus();return;}
+  const [pr,gr,st]=await Promise.all([getJSON("data/prices.json"),getJSON("data/garch.json"),getJSON("data/status.json")]);
+  const when=st&&st.updated_utc?new Date(st.updated_utc).toLocaleString():"";
+  if(st){const bad=(st.tickers||[]).filter(t=>t.status!=="OK");
+    $("issues").innerHTML=bad.length?`<div class="note"><b>Tickers with problems:</b> ${bad.map(t=>`${t.name} (${t.ticker}): ${t.status}`).join("; ")}. Fix them in <code>scripts/tickers.py</code> on GitHub.</div>`:"";}
+  if(pr&&pr.dates&&pr.dates.length){P=pr;G=gr;afterPrices();
+    INFO.prices=`Prices updated ${when}: ${Object.keys(pr.cols).length} series, ${pr.dates.length} days (${pr.dates[0]} to ${pr.dates[pr.dates.length-1]}).`;}
+  else INFO.prices="No price data yet. First time only: on GitHub open Actions > Update data > Run workflow, wait 2 minutes, reload this page.";
+  try{const r=await fetch("data/opco_data.xlsx?v="+Date.now());
+    if(r.ok){const wb=XLSX.read(await r.arrayBuffer(),{type:"array"});
+      O=normaliseOpco(XLSX.utils.sheet_to_json(wb.Sheets["OpCo_KPIs"]||wb.Sheets[wb.SheetNames[0]]));
+      if(O.length){afterOpco();const filled=O.filter(x=>KPIS.some(k=>x[k]!=null)).length;
+        INFO.opco=filled?`OpCo data: ${filled} of ${O.length} rows filled.`:"OpCo Excel is still empty: fill docs/data/opco_data.xlsx on GitHub.";}}}catch(e){}
+  refreshStatus();
+}
+
+/* demo: synthetic, clearly labelled */
+function seeded(s){return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296;};}
+function gauss(r){return Math.sqrt(-2*Math.log(r()+1e-12))*Math.cos(2*Math.PI*r());}
+$("btnDemo").onclick=()=>{
+  const r=seeded(7), names=["A1 Telekom Austria","Deutsche Telekom","Swisscom","Proximus","Telia","Telenor","Orange","KPN","Telefonica","Hrvatski Telekom","Telekom Slovenije","STOXX Europe 600"];
+  const dates=[];for(let d=new Date("2020-01-01");d<=new Date("2026-10-01");d.setDate(d.getDate()+1)){const w=d.getDay();if(w&&w<6)dates.push(d.toISOString().slice(0,10));}
+  const mkt=dates.map(()=>gauss(r)*0.01), cols={};
+  names.forEach((n,i)=>{let p=100;cols[n]=dates.map((_,j)=>{p*=Math.exp((0.4+0.07*i)*mkt[j]+gauss(r)*0.008);return p;});});
+  P={dates,cols};
+  const ctry={Austria:["A1 Austria","Magenta Telekom (DT)","Drei (Hutchison)"],Croatia:["A1 Croatia","Hrvatski Telekom","Telemach Croatia"]};
+  O=[];Object.entries(ctry).forEach(([c,cs])=>cs.forEach((co,k)=>{for(let y=2020;y<=2025;y++){const rev=400+r()*2500;O.push({Country:c,Company:co,Role:k?"Competitor":"A1 OpCo",Year:y,"Revenue (EUR m)":rev,"EBITDA (EUR m)":rev*(0.3+r()*0.15),"EBITDA margin (%)":null});}}));
+  ["A1 Telekom Austria","Deutsche Telekom","Swisscom","Proximus","Telia","Telenor","Orange","KPN","Telefonica","Hrvatski Telekom","Telekom Slovenije"].forEach(n=>{for(let y=2020;y<=2025;y++){const rev=1000+r()*9000;O.push({Country:"Group",Company:n,Role:"Peer",Year:y,"Revenue (EUR m)":rev,"EBITDA (EUR m)":rev*(0.28+r()*0.14),"EBITDA margin (%)":null});}});
+  O=normaliseOpco(O);G=null;afterPrices();afterOpco();
+  setStatus("DEMO: synthetic data, not real. Load your own files to get real results.");
+};
+
+/* tabs */
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));document.querySelectorAll(".pane").forEach(x=>x.classList.remove("on"));
+  t.classList.add("on");$(t.dataset.p).classList.add("on");
+  setTimeout(()=>window.dispatchEvent(new Event("resize")),50);
+  if(t.dataset.p==="p1")renderOpco();
+});
+renderOpco();
+loadSite();
+</script>
+</body>
+</html>
